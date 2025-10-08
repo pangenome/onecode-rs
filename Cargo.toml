@@ -1,6 +1,20 @@
 [package]
 name = "onecode-rs"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
+authors = ["Erik Clarke"]
+license = "MIT OR Apache-2.0"
+description = "Rust bindings for ONEcode - a data representation format for genomic data"
+repository = "https://github.com/yourusername/onecode-rs"
+readme = "README.md"
+
+[lib]
+name = "onecode"
+path = "src/lib.rs"
 
 [dependencies]
+libc = "0.2"
+
+[build-dependencies]
+cc = "1.0"
+bindgen = "0.70"
