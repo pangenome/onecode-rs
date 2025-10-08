@@ -203,8 +203,8 @@ static void schemaAddInfoFromArray (OneSchema *vs, int n, OneType *a, char t, ch
 static void schemaAddInfoFromLine (OneSchema *vs, OneFile *vf, char t, char type)
 { // assumes field specification is in the STRING_LIST of the current vf line
   // need to set vi->comment separately
-  
-  static OneType a[32] ;
+
+  OneType a[32] ;  // Changed from static to local for thread safety
   int            i ;
   OneType        j ;
   char          *s = oneString(vf) ;
@@ -277,7 +277,7 @@ static OneSchema *schemaLoadRecord (OneSchema *vs, OneFile *vf)
 
 static void oneFileDestroy (OneFile *vf) ; // need a forward declaration here
 
-static bool isBootStrap = false ;
+static _Thread_local bool isBootStrap = false ;
 
 OneSchema *oneSchemaCreateFromFile (const char *filename)
 {
@@ -394,7 +394,7 @@ OneSchema *oneSchemaCreateFromText (const char *text) // write to temp file and 
   // static char template[64] ;
   // sprintf (template, "/tmp/OneTextSchema-%d.schema", getpid()) ;
 
-  char template[] = "/tmp/OneTextSchema-XXXXXX.schema" ;
+  char template[] = "/tmp/OneTextSchema-XXXXXX" ;
   errno = 0 ;
   int fd = mkstemp(template) ;
   if (fd == -1) die ("failed to make temporary file %s for writing schema to - errno %d", template, errno) ;

@@ -68,7 +68,6 @@ fn test_concurrent_schema_from_text() {
 }
 
 #[test]
-#[ignore] // C library has global state (isBootStrap) in schema parsing - concurrent file opening fails
 fn test_mixed_operations_concurrent() {
     // Mix successful and failing operations concurrently
     let good_file = Arc::new("ONEcode/TEST/small.seq".to_string());

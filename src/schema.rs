@@ -3,13 +3,6 @@
 use crate::error::{OneError, Result};
 use crate::ffi;
 use std::ffi::CString;
-use std::sync::Mutex;
-
-// Global mutex to protect schema creation
-// Even though temp files are now thread-safe (mkstemp patch), the C library's schema
-// parsing code has global state (static bool isBootStrap at ONElib.c:282) that makes
-// concurrent schema creation unsafe
-static SCHEMA_CREATION_LOCK: Mutex<()> = Mutex::new(());
 
 /// A ONE file schema
 pub struct OneSchema {
@@ -37,14 +30,10 @@ impl OneSchema {
     ///
     /// # Thread Safety
     ///
-    /// This function uses a mutex to serialize schema creation. Even though temp file
-    /// handling is thread-safe (mkstemp), the C library has global state (isBootStrap)
-    /// that makes concurrent schema creation unsafe.
+    /// This function is now thread-safe. The C library uses `_Thread_local` for
+    /// all global state (errorString, isBootStrap) and mkstemp() for temp files.
     pub fn from_text(text: &str) -> Result<Self> {
         let c_text = CString::new(text)?;
-
-        // Lock to prevent race condition in C library's schema parsing global state
-        let _guard = SCHEMA_CREATION_LOCK.lock().unwrap();
 
         unsafe {
             let ptr = ffi::oneSchemaCreateFromText(c_text.as_ptr());
