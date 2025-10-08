@@ -7,7 +7,7 @@
  *  Copyright (C) Richard Durbin, Cambridge University and Eugene Myers 2019-
  *
  * HISTORY:
- * Last edited: Oct  2 10:15 2025 (rd109)
+ * Last edited: Oct  8 13:39 2025 (rd109)
  * * Oct  2 09:30 2025 (rd109): add localPath in OpenRead to try <path>.1<type> if <path> fails
  * * May  1 00:23 2024 (rd109): moved to OneInfo->index and multiple objects/groups
  * * Apr 16 18:59 2024 (rd109): major change to object and group indexing: 0 is start of data
@@ -203,12 +203,12 @@ static void schemaAddInfoFromArray (OneSchema *vs, int n, OneType *a, char t, ch
 static void schemaAddInfoFromLine (OneSchema *vs, OneFile *vf, char t, char type)
 { // assumes field specification is in the STRING_LIST of the current vf line
   // need to set vi->comment separately
-
-  OneType a[32] ;  // Changed from static to local for thread safety
-  int            i ;
-  OneType        j ;
-  char          *s = oneString(vf) ;
-  int            n = oneLen(vf) ;
+  
+  OneType  a[32] ;
+  int      i ;
+  OneType  j ;
+  char    *s = oneString(vf) ;
+  int      n = oneLen(vf) ;
   
   if (n > 32)
     die ("line specification %d fields too long - need to recompile", n) ;
@@ -277,8 +277,6 @@ static OneSchema *schemaLoadRecord (OneSchema *vs, OneFile *vf)
 
 static void oneFileDestroy (OneFile *vf) ; // need a forward declaration here
 
-static _Thread_local bool isBootStrap = false ;
-
 OneSchema *oneSchemaCreateFromFile (const char *filename)
 {
   FILE *fs = fopen (filename, "r") ;
@@ -287,7 +285,6 @@ OneSchema *oneSchemaCreateFromFile (const char *filename)
 
   OneSchema *vs = new0 (1, OneSchema) ;
 
-  isBootStrap = true ;
   OneFile *vf = new0 (1, OneFile) ;      // shell object to support bootstrap
   // bootstrap specification of linetypes to read schemas
   { OneInfo *vi ;
@@ -306,15 +303,19 @@ OneSchema *oneSchemaCreateFromFile (const char *filename)
   // first load the universal header and footer (non-alphabetic) line types 
   // do this by writing their schema into a temporary file and parsing it into the base schema
   { errno = 0 ;
-    // Use local buffer instead of static for thread safety
     char template[64] ;
-// Always use mkstemp for thread-safe temp file creation
-// (removed VALGRIND_MACOS workaround for thread safety in Rust bindings)
+// #define VALGRIND_MACOS
+#ifdef VALGRIND_MACOS // MacOS valgrind is missing functions to make temp files it seems
+    sprintf (template, "/tmp/OneSchema.%d", getpid()) ;
+    vf->f = fopen (template, "w+") ;
+    if (errno) die ("failed to open temporary file %s errno %d\n", template, errno) ;
+#else
     strcpy (template, "/tmp/OneSchema.XXXXXX") ;
     int fd = mkstemp (template) ;
     if (errno) die ("failed to open temporary file %s errno %d\n", template, errno) ;
     vf->f = fdopen (fd, "w+") ;
     if (errno) die ("failed to assign temporary file to stream: errno %d\n", errno) ;
+#endif
     unlink (template) ;                  // this ensures that the file is removed on closure
     if (errno) die ("failed to remove temporary file %s errno %d\n", template, errno) ;
   }
@@ -370,8 +371,6 @@ OneSchema *oneSchemaCreateFromFile (const char *filename)
     vs = schemaLoadRecord (vs, vf) ;
   oneFileDestroy (vf) ;
 
-  isBootStrap = false ;
-  
   return vs0 ;
 }
 
@@ -393,14 +392,13 @@ OneSchema *oneSchemaCreateFromText (const char *text) // write to temp file and 
   // Claude points out that the getpid() solution below is not threadsafe.  So it proposed the code below.
   // static char template[64] ;
   // sprintf (template, "/tmp/OneTextSchema-%d.schema", getpid()) ;
-
+  
   char template[] = "/tmp/OneTextSchema-XXXXXX" ;
   errno = 0 ;
   int fd = mkstemp(template) ;
   if (fd == -1) die ("failed to make temporary file %s for writing schema to - errno %d", template, errno) ;
   FILE *f = fdopen(fd, "w") ;
   if (!f) die ("failed to fdopen temporary file %s for writing schema to - errno %d", template, errno) ;
-
   char *fixedText = schemaFixNewlines (text) ;
   char *s = fixedText ;
   while (*s && *s != 'P')
@@ -1102,8 +1100,6 @@ char oneReadLine (OneFile *vf)
       t = x;
     }
   vf->lineType = t;
-
-  // if (!isBootStrap) fprintf (stderr, "reading line %d type %c\n", (int)vf->line, t) ;
 
   li = vf->info[(int) t];
   if (li == NULL)
