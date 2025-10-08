@@ -4,7 +4,91 @@
 
 The ONEcode C library has several thread safety issues that affect concurrent usage within a single process. This document describes these issues and the workarounds implemented in the Rust wrapper.
 
-## Issue 1: `oneSchemaCreateFromText()` Race Condition
+## Issue 1: Global Error String Buffer
+
+### The Problem
+
+The ONEcode C library uses a **global static buffer** for error messages that is not thread-safe.
+
+### Root Cause
+
+From `ONElib.c` line 94:
+
+```c
+static char errorString[1024];
+
+char *oneErrorString(void) { return errorString; }
+```
+
+Any function that fails writes to this global buffer using `snprintf`:
+
+```c
+#define OPEN_ERROR1(x) \
+    { snprintf(errorString, 1024, "ONEcode file open error %s: %s\n", localPath, x); \
+      fclose(f); if (localPath != path) free(localPath); return NULL; }
+```
+
+**The bug**: When multiple threads call functions that might fail:
+
+1. Thread A calls `oneFileOpenRead("bad1.seq", ...)` which fails
+2. Thread B calls `oneFileOpenRead("bad2.seq", ...)` which fails and **overwrites errorString**
+3. Thread A calls `oneErrorString()` and gets Thread B's error message!
+
+Or worse, if Thread A is reading errorString while Thread B is writing, we get **undefined behavior** (data race, potential crash).
+
+### Symptoms
+
+- Wrong error messages reported
+- Corrupted error strings
+- Potential crashes when reading error strings concurrently
+
+### Rust Wrapper Solution
+
+We added a global mutex in `src/file.rs`:
+
+```rust
+static ERROR_STRING_LOCK: Mutex<()> = Mutex::new(());
+
+pub fn open_read(...) -> Result<Self> {
+    // Lock BEFORE calling C function (which may write to errorString)
+    let _guard = ERROR_STRING_LOCK.lock().unwrap();
+
+    let ptr = ffi::oneFileOpenRead(...);
+    if ptr.is_null() {
+        // Still holding lock while reading error string
+        let err_str = ffi::oneErrorString();
+        let err_msg = CStr::from_ptr(err_str).to_string_lossy().into_owned();
+        return Err(OneError::OpenFailed(err_msg));
+    }
+    // Lock released here
+    Ok(OneFile { ptr, is_owned: true })
+}
+```
+
+**Critical**: The lock must be held during BOTH:
+1. The C function call (which may write to errorString)
+2. Reading the errorString
+
+This ensures atomicity of the fail-and-report-error operation.
+
+### Recommended Fix for C Library
+
+Use thread-local storage or return error codes:
+
+```c
+// Option 1: Thread-local storage (C11)
+_Thread_local char errorString[1024];
+
+// Option 2: Return error codes and error messages together
+typedef struct {
+    int code;
+    char message[1024];
+} OneError;
+
+OneFile *oneFileOpenRead(..., OneError *err);
+```
+
+## Issue 2: `oneSchemaCreateFromText()` Race Condition
 
 ### The Problem
 
@@ -82,7 +166,7 @@ if (fd == -1) die(...);
 FILE *f = fdopen(fd, "w");
 ```
 
-## Issue 2: Potential Global State in Schema Parsing
+## Issue 3: Potential Global State in Schema Parsing
 
 ### The Problem
 
@@ -129,7 +213,8 @@ For production code:
 
 | Issue | Status | Solution |
 |-------|--------|----------|
-| `from_text()` race condition | ✅ Fixed | Global mutex in Rust wrapper |
+| Global error string buffer | ✅ Fixed | Mutex around C calls + error reads |
+| `from_text()` temp file race | ✅ Fixed | Mutex around `oneSchemaCreateFromText()` |
 | Schema parsing thread safety | ⚠️ Workaround | Use `--test-threads=1` |
 | General thread safety audit | ❌ Needed | Comprehensive C library review required |
 
