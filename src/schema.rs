@@ -5,10 +5,11 @@ use crate::ffi;
 use std::ffi::CString;
 use std::sync::Mutex;
 
-// Global mutex to protect oneSchemaCreateFromText() calls
-// The C library uses /tmp/OneTextSchema-{pid}.schema which creates race conditions
-// when multiple threads in the same process call this function simultaneously
-static SCHEMA_FROM_TEXT_LOCK: Mutex<()> = Mutex::new(());
+// Global mutex to protect schema creation
+// Even though temp files are now thread-safe (mkstemp patch), the C library's schema
+// parsing code has global state (static bool isBootStrap at ONElib.c:282) that makes
+// concurrent schema creation unsafe
+static SCHEMA_CREATION_LOCK: Mutex<()> = Mutex::new(());
 
 /// A ONE file schema
 pub struct OneSchema {
@@ -36,14 +37,14 @@ impl OneSchema {
     ///
     /// # Thread Safety
     ///
-    /// This function uses a global mutex to serialize access to the underlying C function
-    /// `oneSchemaCreateFromText()`, which has a race condition when called from multiple
-    /// threads simultaneously (it uses `/tmp/OneTextSchema-{pid}.schema` as a temporary file).
+    /// This function uses a mutex to serialize schema creation. Even though temp file
+    /// handling is thread-safe (mkstemp), the C library has global state (isBootStrap)
+    /// that makes concurrent schema creation unsafe.
     pub fn from_text(text: &str) -> Result<Self> {
         let c_text = CString::new(text)?;
 
-        // Lock to prevent race condition in C library's temp file handling
-        let _guard = SCHEMA_FROM_TEXT_LOCK.lock().unwrap();
+        // Lock to prevent race condition in C library's schema parsing global state
+        let _guard = SCHEMA_CREATION_LOCK.lock().unwrap();
 
         unsafe {
             let ptr = ffi::oneSchemaCreateFromText(c_text.as_ptr());

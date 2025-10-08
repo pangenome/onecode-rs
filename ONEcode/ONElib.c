@@ -91,7 +91,9 @@ static inline I64 ltfRead (FILE *f) ;
 
 // error handling
 
-static char errorString[1024] ;
+// Made thread-local for thread safety in Rust bindings
+// Each thread gets its own error string buffer
+_Thread_local char errorString[1024] ;
 
 char *oneErrorString (void) { return errorString ; }
 
@@ -306,19 +308,15 @@ OneSchema *oneSchemaCreateFromFile (const char *filename)
   // first load the universal header and footer (non-alphabetic) line types 
   // do this by writing their schema into a temporary file and parsing it into the base schema
   { errno = 0 ;
-    static char template[64] ;
-#define VALGRIND_MACOS
-#ifdef VALGRIND_MACOS // MacOS valgrind is missing functions to make temp files it seems
-    sprintf (template, "/tmp/OneSchema.%d", getpid()) ;
-    vf->f = fopen (template, "w+") ;
-    if (errno) die ("failed to open temporary file %s errno %d\n", template, errno) ;
-#else
+    // Use local buffer instead of static for thread safety
+    char template[64] ;
+// Always use mkstemp for thread-safe temp file creation
+// (removed VALGRIND_MACOS workaround for thread safety in Rust bindings)
     strcpy (template, "/tmp/OneSchema.XXXXXX") ;
     int fd = mkstemp (template) ;
     if (errno) die ("failed to open temporary file %s errno %d\n", template, errno) ;
     vf->f = fdopen (fd, "w+") ;
     if (errno) die ("failed to assign temporary file to stream: errno %d\n", errno) ;
-#endif
     unlink (template) ;                  // this ensures that the file is removed on closure
     if (errno) die ("failed to remove temporary file %s errno %d\n", template, errno) ;
   }
@@ -394,12 +392,35 @@ static char *schemaFixNewlines (const char *text)
   
 OneSchema *oneSchemaCreateFromText (const char *text) // write to temp file and call CreateFromFile()
 {
-  static char template[64] ;
-  sprintf (template, "/tmp/OneTextSchema-%d.schema", getpid()) ;
+  // Use mkstemp() for thread-safe temporary file creation
+  // Changed from getpid()-based naming to support concurrent calls from multiple threads
+  char template[64] ;
+  strcpy (template, "/tmp/OneTextSchema-XXXXXX.schema") ;
+
+  // mkstemp needs the template to end with XXXXXX, not have extension after
+  char template_base[64] ;
+  strcpy (template_base, "/tmp/OneTextSchema-XXXXXX") ;
 
   errno = 0 ;
-  FILE *f = fopen (template, "w") ;
-  if (!f) die ("failed to open temporary file %s for writing schema to", template) ;
+  int fd = mkstemp (template_base) ;
+  if (fd == -1) die ("failed to create temporary file for writing schema") ;
+
+  // Add .schema extension by renaming
+  strcpy (template, template_base) ;
+  strcat (template, ".schema") ;
+  if (rename (template_base, template) != 0)
+    { close (fd) ;
+      unlink (template_base) ;
+      die ("failed to rename temporary file %s to %s", template_base, template) ;
+    }
+
+  FILE *f = fdopen (fd, "w") ;
+  if (!f)
+    { close (fd) ;
+      unlink (template) ;
+      die ("failed to open temporary file %s for writing schema to", template) ;
+    }
+
   char *fixedText = schemaFixNewlines (text) ;
   char *s = fixedText ;
   while (*s && *s != 'P')

@@ -13,6 +13,7 @@ fn main() {
         .flag("-fPIC")
         .flag("-fno-strict-aliasing")
         .flag("-DNDEBUG")
+        .flag("-std=c11")  // Required for _Thread_local support
         .warnings(true)
         .extra_warnings(true)
         .opt_level(3)

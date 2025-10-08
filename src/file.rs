@@ -5,11 +5,9 @@ use crate::ffi;
 use crate::schema::OneSchema;
 use std::ffi::{CStr, CString};
 use std::ptr;
-use std::sync::Mutex;
 
-// Global mutex to protect oneErrorString() access
-// The C library uses a static global buffer for error messages, which is not thread-safe
-static ERROR_STRING_LOCK: Mutex<()> = Mutex::new(());
+// Note: The C library's errorString is now _Thread_local (patched in ONEcode/ONElib.c)
+// so no mutex is needed for error handling
 
 /// A ONE file handle for reading or writing
 pub struct OneFile {
@@ -46,10 +44,6 @@ impl OneFile {
         let type_ptr = c_type.as_ref().map_or(ptr::null(), |t| t.as_ptr());
 
         unsafe {
-            // Lock around both the C function call and error string read
-            // The C library writes to a global error buffer, which is not thread-safe
-            let _guard = ERROR_STRING_LOCK.lock().unwrap();
-
             let ptr = ffi::oneFileOpenRead(c_path.as_ptr(), schema_ptr, type_ptr, nthreads);
             if ptr.is_null() {
                 let err_str = ffi::oneErrorString();
@@ -87,10 +81,6 @@ impl OneFile {
         let c_type = CString::new(file_type)?;
 
         unsafe {
-            // Lock around both the C function call and error string read
-            // The C library writes to a global error buffer, which is not thread-safe
-            let _guard = ERROR_STRING_LOCK.lock().unwrap();
-
             let ptr = ffi::oneFileOpenWriteNew(
                 c_path.as_ptr(),
                 schema.as_ptr(),
@@ -126,10 +116,6 @@ impl OneFile {
         let c_path = CString::new(path)?;
 
         unsafe {
-            // Lock around both the C function call and error string read
-            // The C library writes to a global error buffer, which is not thread-safe
-            let _guard = ERROR_STRING_LOCK.lock().unwrap();
-
             let ptr =
                 ffi::oneFileOpenWriteFrom(c_path.as_ptr(), source.ptr, is_binary, nthreads);
             if ptr.is_null() {
