@@ -145,7 +145,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "onecode-rs"
+name = "onecode"
 version = "0.1.0"
 dependencies = [
  "bindgen",

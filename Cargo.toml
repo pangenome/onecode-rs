@@ -1,11 +1,13 @@
 [package]
-name = "onecode-rs"
+name = "onecode"
 version = "0.1.0"
 edition = "2021"
-authors = ["Erik Clarke"]
-license = "MIT OR Apache-2.0"
+authors = ["Erik Garrison <erik.garrison@gmail.com>"]
 description = "Rust bindings for ONEcode - a data representation format for genomic data"
-repository = "https://github.com/yourusername/onecode-rs"
+repository = "https://github.com/pangenome/onelib-rs"
+license = "MIT OR Apache-2.0"
+keywords = ["genomics", "bioinformatics", "onecode", "ffi"]
+categories = ["science", "api-bindings"]
 readme = "README.md"
 
 [lib]
