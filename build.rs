@@ -45,6 +45,8 @@ fn main() {
         .allowlist_function("oneFile.*")
         .allowlist_function("oneSchema.*")
         .allowlist_function("one.*")
+        .allowlist_function("_oneList")
+        .allowlist_function("_oneCompressedList")
         // Variables to whitelist
         .allowlist_var("DNAcodec")
         .allowlist_var("oneTypeString")

@@ -368,6 +368,147 @@ impl OneFile {
         }
     }
 
+    /// Get the length of the list field in the current line
+    ///
+    /// This corresponds to the `oneLen()` macro in C.
+    #[allow(clippy::len_without_is_empty)]
+    pub fn len(&self) -> i64 {
+        unsafe {
+            let line_type = (*self.ptr).lineType;
+            let info = (*self.ptr).info[line_type as usize];
+            if info.is_null() {
+                return 0;
+            }
+            let list_field = (*info).listField as usize;
+            let fields = (*self.ptr).field;
+            (*fields.add(list_field)).len as i64 & 0xffffffffffffffi64
+        }
+    }
+
+    /// Check if the list field is empty
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Get a string from the current line
+    ///
+    /// This corresponds to the `oneString()` macro in C.
+    /// Returns a reference to the string data.
+    pub fn string(&self) -> Option<&str> {
+        unsafe {
+            let ptr = ffi::_oneList(self.ptr) as *const i8;
+            if ptr.is_null() {
+                None
+            } else {
+                Some(CStr::from_ptr(ptr).to_str().unwrap_or(""))
+            }
+        }
+    }
+
+    /// Get DNA sequence as characters from the current line
+    ///
+    /// This corresponds to the `oneDNAchar()` macro in C.
+    pub fn dna_char(&self) -> Option<&[u8]> {
+        unsafe {
+            let ptr = ffi::_oneList(self.ptr) as *const u8;
+            if ptr.is_null() {
+                None
+            } else {
+                let len = self.len() as usize;
+                Some(std::slice::from_raw_parts(ptr, len))
+            }
+        }
+    }
+
+    /// Get DNA sequence as 2-bit compressed data from the current line
+    ///
+    /// This corresponds to the `oneDNA2bit()` macro in C.
+    pub fn dna_2bit(&self) -> Option<&[u8]> {
+        unsafe {
+            let ptr = ffi::_oneCompressedList(self.ptr) as *const u8;
+            if ptr.is_null() {
+                None
+            } else {
+                let len = (self.len() + 3) / 4; // 4 bases per byte in 2-bit encoding
+                Some(std::slice::from_raw_parts(ptr, len as usize))
+            }
+        }
+    }
+
+    /// Get an integer list from the current line
+    ///
+    /// This corresponds to the `oneIntList()` macro in C.
+    pub fn int_list(&self) -> Option<&[i64]> {
+        unsafe {
+            let ptr = ffi::_oneList(self.ptr) as *const i64;
+            if ptr.is_null() {
+                None
+            } else {
+                let len = self.len() as usize;
+                Some(std::slice::from_raw_parts(ptr, len))
+            }
+        }
+    }
+
+    /// Get a real/double list from the current line
+    ///
+    /// This corresponds to the `oneRealList()` macro in C.
+    pub fn real_list(&self) -> Option<&[f64]> {
+        unsafe {
+            let ptr = ffi::_oneList(self.ptr) as *const f64;
+            if ptr.is_null() {
+                None
+            } else {
+                let len = self.len() as usize;
+                Some(std::slice::from_raw_parts(ptr, len))
+            }
+        }
+    }
+
+    /// Get the next string in a string list
+    ///
+    /// This corresponds to the `oneNextString()` macro in C.
+    /// Pass the current string pointer to get the next one.
+    pub fn next_string<'a>(&self, current: &'a str) -> Option<&'a str> {
+        unsafe {
+            let next_ptr = current.as_ptr().add(current.len() + 1) as *const i8;
+            if *next_ptr == 0 {
+                None
+            } else {
+                Some(CStr::from_ptr(next_ptr).to_str().unwrap_or(""))
+            }
+        }
+    }
+
+    /// Get the object count for a given line type
+    ///
+    /// This corresponds to the `oneObject()` macro in C.
+    /// Returns the count, or -1 if the line type doesn't exist.
+    pub fn object(&self, line_type: char) -> i64 {
+        unsafe {
+            let info = (*self.ptr).info[line_type as usize];
+            if info.is_null() {
+                -1
+            } else {
+                (*info).accum.count
+            }
+        }
+    }
+
+    /// Get the reference count
+    ///
+    /// This corresponds to the `oneReferenceCount()` macro in C.
+    pub fn reference_count(&self) -> i64 {
+        unsafe {
+            let info = (*self.ptr).info['<' as usize];
+            if info.is_null() {
+                0
+            } else {
+                (*info).accum.count
+            }
+        }
+    }
+
     /// Get the internal pointer (for advanced use with FFI)
     pub fn as_ptr(&self) -> *mut ffi::OneFile {
         self.ptr
