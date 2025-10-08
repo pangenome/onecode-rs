@@ -91,9 +91,7 @@ static inline I64 ltfRead (FILE *f) ;
 
 // error handling
 
-// Made thread-local for thread safety in Rust bindings
-// Each thread gets its own error string buffer
-_Thread_local char errorString[1024] ;
+static _Thread_local char errorString[1024] ;
 
 char *oneErrorString (void) { return errorString ; }
 
@@ -392,34 +390,16 @@ static char *schemaFixNewlines (const char *text)
   
 OneSchema *oneSchemaCreateFromText (const char *text) // write to temp file and call CreateFromFile()
 {
-  // Use mkstemp() for thread-safe temporary file creation
-  // Changed from getpid()-based naming to support concurrent calls from multiple threads
-  char template[64] ;
-  strcpy (template, "/tmp/OneTextSchema-XXXXXX.schema") ;
+  // Claude points out that the getpid() solution below is not threadsafe.  So it proposed the code below.
+  // static char template[64] ;
+  // sprintf (template, "/tmp/OneTextSchema-%d.schema", getpid()) ;
 
-  // mkstemp needs the template to end with XXXXXX, not have extension after
-  char template_base[64] ;
-  strcpy (template_base, "/tmp/OneTextSchema-XXXXXX") ;
-
+  char template[] = "/tmp/OneTextSchema-XXXXXX.schema" ;
   errno = 0 ;
-  int fd = mkstemp (template_base) ;
-  if (fd == -1) die ("failed to create temporary file for writing schema") ;
-
-  // Add .schema extension by renaming
-  strcpy (template, template_base) ;
-  strcat (template, ".schema") ;
-  if (rename (template_base, template) != 0)
-    { close (fd) ;
-      unlink (template_base) ;
-      die ("failed to rename temporary file %s to %s", template_base, template) ;
-    }
-
-  FILE *f = fdopen (fd, "w") ;
-  if (!f)
-    { close (fd) ;
-      unlink (template) ;
-      die ("failed to open temporary file %s for writing schema to", template) ;
-    }
+  int fd = mkstemp(template) ;
+  if (fd == -1) die ("failed to make temporary file %s for writing schema to - errno %d", template, errno) ;
+  FILE *f = fdopen(fd, "w") ;
+  if (!f) die ("failed to fdopen temporary file %s for writing schema to - errno %d", template, errno) ;
 
   char *fixedText = schemaFixNewlines (text) ;
   char *s = fixedText ;
