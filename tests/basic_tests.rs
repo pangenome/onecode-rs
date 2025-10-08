@@ -73,7 +73,6 @@ fn test_stats() -> Result<()> {
 }
 
 #[test]
-#[ignore] // TODO: C library has issue with temporary file cleanup
 fn test_schema_from_text() -> Result<()> {
     let schema_text = "P 3 seq\nO S 1 3 DNA\nD I 1 6 STRING\n";
     let _schema = OneSchema::from_text(schema_text)?;
@@ -131,7 +130,6 @@ fn test_sequential_read() -> Result<()> {
 }
 
 #[test]
-#[ignore] // TODO: C library has issue with temporary file cleanup in oneSchemaCreateFromText
 fn test_write_and_read_roundtrip() -> Result<()> {
     use std::fs;
 

@@ -118,16 +118,24 @@ cargo build
 
 ## Testing
 
-Run tests with single-threaded execution (required due to temporary file handling in the C library):
+Run tests with single-threaded execution (required due to thread safety issues in the C library):
 
 ```bash
 cargo test -- --test-threads=1
 ```
 
-## Known Issues
+All 9 integration tests pass successfully.
 
-- Tests must be run with `--test-threads=1` due to a race condition in the C library's temporary file cleanup
-- `OneSchema::from_text()` may produce warnings about temporary file cleanup on some systems
+## Thread Safety
+
+The ONEcode C library has known thread-safety issues when used from multiple threads simultaneously:
+
+1. **`OneSchema::from_text()`** - Fixed with a Rust-level mutex to prevent race conditions in temporary file handling
+2. **General file operations** - May have issues with unrestricted parallelism due to potential global state in the C library
+
+**Recommendation**: Run tests with `--test-threads=1` and use external synchronization if accessing ONE files from multiple threads in production.
+
+See [THREAD_SAFETY.md](THREAD_SAFETY.md) for detailed analysis and workarounds.
 
 ## Architecture
 
