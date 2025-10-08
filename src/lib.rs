@@ -9,7 +9,7 @@
 //! use onecode::OneFile;
 //!
 //! // Open a ONE file for reading
-//! let file = OneFile::open_read("data.1seq", None).unwrap();
+//! let file = OneFile::open_read("data.1seq", None, None, 1).unwrap();
 //! ```
 
 #![allow(non_upper_case_globals)]
