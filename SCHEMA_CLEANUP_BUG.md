@@ -1,6 +1,7 @@
 # Bug Report: Schema Temporary File Cleanup Issue
 
 **Status**: ⚠️ **WORKAROUND IMPLEMENTED** (serialization) - upstream fix still recommended
+**Upstream Issue**: https://github.com/thegenemyers/ONEcode/issues/5 ✅ **FILED**
 
 ## Problem
 
