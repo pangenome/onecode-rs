@@ -1,5 +1,7 @@
 # Bug Report: Schema Temporary File Cleanup Issue
 
+**Status**: ⚠️ **WORKAROUND IMPLEMENTED** (serialization) - upstream fix still recommended
+
 ## Problem
 
 When running multiple Rust tests that create `OneSchema` instances from text, tests fail with:
@@ -103,12 +105,37 @@ OneSchema *oneSchemaCreateFromText (char *text)
 
 ## Workaround
 
-Run tests serially:
+### ✅ Working Solution (Implemented in fastga-rs)
+
+Serialize schema creation using a global Mutex:
+
+```rust
+use std::sync::Mutex;
+
+/// Global lock to serialize schema creation
+static SCHEMA_CREATION_LOCK: Mutex<()> = Mutex::new(());
+
+fn create_aln_schema() -> Result<OneSchema> {
+    // Hold lock during schema creation to serialize temp file operations
+    let _guard = SCHEMA_CREATION_LOCK.lock().unwrap();
+
+    let schema_text = r#"P 3 aln
+O A 6 3 INT 3 INT 3 INT 3 INT 3 INT 3 INT
+..."#;
+
+    OneSchema::from_text(schema_text)
+        .context("Failed to create .1aln schema")
+}
+```
+
+**Status**: ✅ Tests now pass reliably in parallel (fastga-rs commit 50fb1b1)
+
+### ❌ Doesn't Work: Serial Test Execution
+
+Running tests serially works but is slow:
 ```bash
 cargo test -- --test-threads=1
 ```
-
-But this is slow and defeats the purpose of parallel testing.
 
 ## Suggested Fixes
 
