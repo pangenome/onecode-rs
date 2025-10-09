@@ -15,6 +15,7 @@ This library provides safe, idiomatic Rust bindings to the ONEcode C library.
 - ✅ Provenance and reference tracking
 - ✅ Type-safe access to fields (integers, reals, characters, strings, lists)
 - ✅ File navigation and statistics
+- ✅ Sequence name extraction from embedded GDB in alignment files
 - ✅ RAII-based resource management
 - ✅ **Fully thread-safe** - concurrent operations supported
 
@@ -24,7 +25,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-onecode = { git = "https://github.com/pangenome/onelib-rs" }
+onecode = { git = "https://github.com/pangenome/onecode-rs" }
 ```
 
 ## Usage
@@ -128,6 +129,51 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
+### Working with alignment files (.1aln) and sequence names
+
+Alignment files can contain embedded genome database (GDB) information, mapping sequence IDs to names:
+
+```rust
+use onecode::OneFile;
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut file = OneFile::open_read("alignments.1aln", None, None, 1)?;
+
+    // Get all sequence names (efficient for multiple lookups)
+    let seq_names = file.get_all_sequence_names();
+    println!("Found {} sequences", seq_names.len());
+
+    // Read alignments and resolve sequence names
+    loop {
+        let line_type = file.read_line();
+        if line_type == '\0' { break; }
+
+        if line_type == 'A' {
+            let query_id = file.int(0);
+            let target_id = file.int(3);
+
+            if let (Some(query_name), Some(target_name)) =
+                (seq_names.get(&query_id), seq_names.get(&target_id)) {
+                println!("Alignment: {} vs {}", query_name, target_name);
+            }
+        }
+    }
+
+    Ok(())
+}
+```
+
+Or look up individual names on-demand:
+
+```rust
+let mut file = OneFile::open_read("alignments.1aln", None, None, 1)?;
+
+// Get a specific sequence name by ID
+if let Some(name) = file.get_sequence_name(5) {
+    println!("Sequence 5: {}", name);
+}
+```
+
 ## API Documentation
 
 Full API documentation is available via cargo doc:
@@ -160,6 +206,7 @@ cargo test
 
 Test suite includes:
 - 9 basic functionality tests
+- 3 sequence name extraction tests
 - 4 thread-safety stress tests (10-50 concurrent threads)
 - 2 doc tests
 

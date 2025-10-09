@@ -3,6 +3,7 @@
 use crate::error::{OneError, Result};
 use crate::ffi;
 use crate::schema::OneSchema;
+use std::collections::HashMap;
 use std::ffi::{CStr, CString};
 use std::ptr;
 
@@ -512,6 +513,87 @@ impl OneFile {
     /// Get the internal pointer (for advanced use with FFI)
     pub fn as_ptr(&self) -> *mut ffi::OneFile {
         self.ptr
+    }
+
+    /// Get sequence name by ID from embedded GDB
+    ///
+    /// This method searches for 'S' (scaffold/sequence) line types in the file
+    /// and returns the name for the given sequence ID. The sequence IDs are
+    /// 0-indexed and correspond to the order of S lines in the file.
+    ///
+    /// # Arguments
+    /// * `seq_id` - Sequence/scaffold ID from alignment record (0-indexed)
+    ///
+    /// # Returns
+    /// The sequence name, or None if not found
+    ///
+    /// # Note
+    /// This method requires scanning through the file to find S lines.
+    /// For repeated lookups, consider using `get_all_sequence_names()` to
+    /// build a complete mapping once.
+    pub fn get_sequence_name(&mut self, seq_id: i64) -> Option<String> {
+        // Save current position
+        let saved_line = self.line_number();
+
+        // Go to the beginning of the file to scan for S lines
+        unsafe {
+            // Try to goto the start of S objects (if indexed)
+            if ffi::oneGoto(self.ptr, 'S' as i8, 0) {
+                let mut current_id = 0i64;
+                loop {
+                    let line_type = ffi::oneReadLine(self.ptr) as u8 as char;
+                    if line_type == '\0' {
+                        break;
+                    }
+                    if line_type == 'S' {
+                        if current_id == seq_id {
+                            let name = self.string();
+                            // Restore position (best effort - goto may not work on all files)
+                            let _ = ffi::oneGoto(self.ptr, (*self.ptr).lineType, saved_line);
+                            return name.map(|s| s.to_string());
+                        }
+                        current_id += 1;
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Get all sequence names from the embedded GDB
+    ///
+    /// Returns a map of sequence ID → name. This is more efficient than
+    /// calling `get_sequence_name()` repeatedly.
+    ///
+    /// # Returns
+    /// A HashMap mapping sequence IDs (0-indexed) to their names
+    pub fn get_all_sequence_names(&mut self) -> HashMap<i64, String> {
+        let mut names = HashMap::new();
+
+        // Save current position
+        let saved_line = self.line_number();
+
+        // Go to the beginning to scan for S lines
+        unsafe {
+            if ffi::oneGoto(self.ptr, 'S' as i8, 0) {
+                let mut current_id = 0i64;
+                loop {
+                    let line_type = ffi::oneReadLine(self.ptr) as u8 as char;
+                    if line_type == '\0' {
+                        break;
+                    }
+                    if line_type == 'S' {
+                        if let Some(name) = self.string() {
+                            names.insert(current_id, name.to_string());
+                            current_id += 1;
+                        }
+                    }
+                }
+                // Restore position (best effort)
+                let _ = ffi::oneGoto(self.ptr, (*self.ptr).lineType, saved_line);
+            }
+        }
+        names
     }
 
     /// Close the file explicitly
