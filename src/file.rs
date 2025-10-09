@@ -536,14 +536,19 @@ impl OneFile {
         let saved_line = self.line_number();
 
         // Go to the beginning of the file to scan for S lines
+        // Note: 'S' is a group member inside 'g' objects, not a top-level object
+        // Schema: ~ O g 0 (groups scaffolds into a GDB skeleton)
+        //         ~ G S 0 (collection of scaffolds constituting a GDB)
+        //         ~ O S 1 6 STRING (id for a scaffold)
         unsafe {
-            // Try to goto the start of S objects (if indexed)
-            if ffi::oneGoto(self.ptr, 'S' as i8, 0) {
+            // Navigate to the FIRST 'g' group object (objects are numbered starting at 1)
+            if ffi::oneGoto(self.ptr, 'g' as i8, 1) {
                 let mut current_id = 0i64;
+                let mut is_first_line = true;
                 loop {
                     let line_type = ffi::oneReadLine(self.ptr) as u8 as char;
                     if line_type == '\0' {
-                        break;
+                        break; // EOF
                     }
                     if line_type == 'S' {
                         if current_id == seq_id {
@@ -554,6 +559,12 @@ impl OneFile {
                         }
                         current_id += 1;
                     }
+                    // Skip the first 'g' line (we're positioned at it after oneGoto)
+                    // Stop when we hit the NEXT 'g' or reach 'A' (alignments)
+                    if !is_first_line && (line_type == 'g' || line_type == 'A') {
+                        break;
+                    }
+                    is_first_line = false;
                 }
             }
         }
@@ -574,13 +585,16 @@ impl OneFile {
         let saved_line = self.line_number();
 
         // Go to the beginning to scan for S lines
+        // Note: 'S' is a group member inside 'g' objects, not a top-level object
         unsafe {
-            if ffi::oneGoto(self.ptr, 'S' as i8, 0) {
+            // Navigate to the FIRST 'g' group object (objects are numbered starting at 1)
+            if ffi::oneGoto(self.ptr, 'g' as i8, 1) {
                 let mut current_id = 0i64;
+                let mut is_first_line = true;
                 loop {
                     let line_type = ffi::oneReadLine(self.ptr) as u8 as char;
                     if line_type == '\0' {
-                        break;
+                        break; // EOF
                     }
                     if line_type == 'S' {
                         if let Some(name) = self.string() {
@@ -588,6 +602,12 @@ impl OneFile {
                             current_id += 1;
                         }
                     }
+                    // Skip the first 'g' line (we're positioned at it after oneGoto)
+                    // Stop when we hit the NEXT 'g' or reach 'A' (alignments)
+                    if !is_first_line && (line_type == 'g' || line_type == 'A') {
+                        break;
+                    }
+                    is_first_line = false;
                 }
                 // Restore position (best effort)
                 let _ = ffi::oneGoto(self.ptr, (*self.ptr).lineType, saved_line);
