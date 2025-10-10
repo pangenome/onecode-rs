@@ -616,6 +616,73 @@ impl OneFile {
         names
     }
 
+    /// Get all contig offset information from the embedded GDB
+    ///
+    /// Returns a map of contig ID → (sbeg, clen) where:
+    /// - sbeg: scaffold begin offset (position where this contig starts in the scaffold)
+    /// - clen: contig length
+    ///
+    /// This information is needed to convert contig coordinates to scaffold/chromosome
+    /// coordinates, matching ALNtoPAF's behavior.
+    ///
+    /// # Returns
+    /// A HashMap mapping contig IDs (0-indexed) to (scaffold_offset, contig_length)
+    pub fn get_all_contig_offsets(&mut self) -> HashMap<i64, (i64, i64)> {
+        let mut contigs = HashMap::new();
+
+        // Save current position
+        let saved_line = self.line_number();
+
+        // Navigate to the FIRST 'g' group object (GDB skeleton)
+        unsafe {
+            if ffi::oneGoto(self.ptr, 'g' as i8, 1) {
+                let mut contig_id = 0i64;
+                let mut spos = 0i64; // scaffold position accumulator
+                let mut is_first_line = true;
+
+                loop {
+                    let line_type = ffi::oneReadLine(self.ptr) as u8 as char;
+                    if line_type == '\0' {
+                        break; // EOF
+                    }
+
+                    match line_type {
+                        'S' => {
+                            // Scaffold record - reset scaffold position for new scaffold
+                            spos = 0;
+                        }
+                        'G' => {
+                            // Gap record - advance scaffold position by gap length
+                            let gap_len = self.int(0);
+                            spos += gap_len;
+                        }
+                        'C' => {
+                            // Contig record - record (sbeg, clen) and advance position
+                            let clen = self.int(0);
+                            contigs.insert(contig_id, (spos, clen));
+                            contig_id += 1;
+                            spos += clen;
+                        }
+                        'g' | 'A' => {
+                            // Hit next GDB group or alignments - stop
+                            if !is_first_line {
+                                break;
+                            }
+                        }
+                        _ => {
+                            // Skip other records (M, etc.)
+                        }
+                    }
+                    is_first_line = false;
+                }
+
+                // Restore position (best effort)
+                let _ = ffi::oneGoto(self.ptr, (*self.ptr).lineType, saved_line);
+            }
+        }
+        contigs
+    }
+
     /// Close the file explicitly
     ///
     /// This is called automatically on drop, but you can call it manually
