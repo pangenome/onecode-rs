@@ -616,6 +616,77 @@ impl OneFile {
         names
     }
 
+    /// Get all sequence lengths from the embedded GDB
+    ///
+    /// Returns a map of sequence ID → total sequence length.
+    /// The length is computed by summing all contig (C) and gap (G) lengths
+    /// for each scaffold (S).
+    ///
+    /// # Returns
+    /// A HashMap mapping sequence IDs (0-indexed) to their total lengths
+    pub fn get_all_sequence_lengths(&mut self) -> HashMap<i64, i64> {
+        let mut lengths = HashMap::new();
+
+        // Save current position
+        let saved_line = self.line_number();
+
+        // Navigate to the FIRST 'g' group object (GDB skeleton)
+        unsafe {
+            if ffi::oneGoto(self.ptr, 'g' as i8, 1) {
+                let mut current_seq_id = -1i64;
+                let mut current_length = 0i64;
+                let mut is_first_line = true;
+
+                loop {
+                    let line_type = ffi::oneReadLine(self.ptr) as u8 as char;
+                    if line_type == '\0' {
+                        break; // EOF
+                    }
+
+                    match line_type {
+                        'S' => {
+                            // Save previous scaffold's length if any
+                            if current_seq_id >= 0 {
+                                lengths.insert(current_seq_id, current_length);
+                            }
+                            // Start new scaffold
+                            current_seq_id += 1;
+                            current_length = 0;
+                        }
+                        'G' => {
+                            // Gap record - add to current scaffold length
+                            let gap_len = self.int(0);
+                            current_length += gap_len;
+                        }
+                        'C' => {
+                            // Contig record - add to current scaffold length
+                            let contig_len = self.int(0);
+                            current_length += contig_len;
+                        }
+                        'g' | 'A' | 'a' => {
+                            // Hit next GDB group or alignments - stop
+                            if !is_first_line {
+                                // Save last scaffold's length
+                                if current_seq_id >= 0 {
+                                    lengths.insert(current_seq_id, current_length);
+                                }
+                                break;
+                            }
+                        }
+                        _ => {
+                            // Skip other records (M, etc.)
+                        }
+                    }
+                    is_first_line = false;
+                }
+
+                // Restore position (best effort)
+                let _ = ffi::oneGoto(self.ptr, (*self.ptr).lineType, saved_line);
+            }
+        }
+        lengths
+    }
+
     /// Get all contig offset information from the embedded GDB
     ///
     /// Returns a map of contig ID → (sbeg, clen) where:
