@@ -515,126 +515,85 @@ impl OneFile {
         self.ptr
     }
 
-    /// Get sequence name by ID from embedded GDB
+    /// Get sequence name by contig ID from embedded GDB
     ///
-    /// This method searches for 'S' (scaffold/sequence) line types in the file
-    /// and returns the name for the given sequence ID. The sequence IDs are
-    /// 0-indexed and correspond to the order of S lines in the file.
+    /// This method maps a contig ID (as used in alignment records) to the name
+    /// of the scaffold containing that contig.
     ///
     /// # Arguments
-    /// * `seq_id` - Sequence/scaffold ID from alignment record (0-indexed)
+    /// * `seq_id` - Contig ID from alignment record (0-indexed)
     ///
     /// # Returns
-    /// The sequence name, or None if not found
-    ///
-    /// # Note
-    /// This method requires scanning through the file to find S lines.
-    /// For repeated lookups, consider using `get_all_sequence_names()` to
-    /// build a complete mapping once.
+    /// The scaffold name containing this contig, or None if not found
     pub fn get_sequence_name(&mut self, seq_id: i64) -> Option<String> {
         // Save current position
         let saved_line = self.line_number();
 
-        // Go to the beginning of the file to scan for S lines
-        // Note: 'S' is a group member inside 'g' objects, not a top-level object
-        // Schema: ~ O g 0 (groups scaffolds into a GDB skeleton)
-        //         ~ G S 0 (collection of scaffolds constituting a GDB)
-        //         ~ O S 1 6 STRING (id for a scaffold)
         unsafe {
             // Navigate to the FIRST 'g' group object (objects are numbered starting at 1)
             if ffi::oneGoto(self.ptr, 'g' as i8, 1) {
-                let mut current_id = 0i64;
+                let mut contig_id = 0i64;
+                let mut current_scaffold_name = String::new();
                 let mut is_first_line = true;
+                
                 loop {
                     let line_type = ffi::oneReadLine(self.ptr) as u8 as char;
                     if line_type == '\0' {
                         break; // EOF
                     }
-                    if line_type == 'S' {
-                        if current_id == seq_id {
-                            let name = self.string();
-                            // Restore position (best effort - goto may not work on all files)
-                            let _ = ffi::oneGoto(self.ptr, (*self.ptr).lineType, saved_line);
-                            return name.map(|s| s.to_string());
+                    
+                    match line_type {
+                        'S' => {
+                            // New scaffold - store its name
+                            if let Some(name) = self.string() {
+                                current_scaffold_name = name.to_string();
+                            }
                         }
-                        current_id += 1;
-                    }
-                    // Skip the first 'g' line (we're positioned at it after oneGoto)
-                    // Stop when we hit the NEXT 'g' or reach 'A' (alignments)
-                    if !is_first_line && (line_type == 'g' || line_type == 'A') {
-                        break;
+                        'C' => {
+                            // Contig record - check if this is the one we're looking for
+                            if contig_id == seq_id {
+                                // Restore position and return the scaffold name
+                                let _ = ffi::oneGoto(self.ptr, (*self.ptr).lineType, saved_line);
+                                return Some(current_scaffold_name);
+                            }
+                            contig_id += 1;
+                        }
+                        'g' | 'A' | 'a' => {
+                            // Hit next GDB group or alignments - stop
+                            if !is_first_line {
+                                break;
+                            }
+                        }
+                        _ => {
+                            // Skip other records (G for gaps, M for masks, etc.)
+                        }
                     }
                     is_first_line = false;
                 }
+                // Restore position (best effort - goto may not work on all files)
+                let _ = ffi::oneGoto(self.ptr, (*self.ptr).lineType, saved_line);
             }
         }
         None
     }
 
-    /// Get all sequence names from the embedded GDB
+    /// Get sequence names mapped by contig ID for alignment files
     ///
-    /// Returns a map of sequence ID → name. This is more efficient than
-    /// calling `get_sequence_name()` repeatedly.
+    /// In alignment files with embedded GDB skeletons, alignments reference
+    /// contigs by their global ID. This method returns a mapping from contig ID
+    /// to the name of the scaffold containing that contig.
     ///
     /// # Returns
-    /// A HashMap mapping sequence IDs (0-indexed) to their names
+    /// A HashMap mapping contig IDs (0-indexed) to their scaffold names
     pub fn get_all_sequence_names(&mut self) -> HashMap<i64, String> {
         let mut names = HashMap::new();
-
-        // Save current position
         let saved_line = self.line_number();
 
-        // Go to the beginning to scan for S lines
-        // Note: 'S' is a group member inside 'g' objects, not a top-level object
         unsafe {
-            // Navigate to the FIRST 'g' group object (objects are numbered starting at 1)
+            // Navigate to the first 'g' group object (GDB skeleton)
             if ffi::oneGoto(self.ptr, 'g' as i8, 1) {
-                let mut current_id = 0i64;
-                let mut is_first_line = true;
-                loop {
-                    let line_type = ffi::oneReadLine(self.ptr) as u8 as char;
-                    if line_type == '\0' {
-                        break; // EOF
-                    }
-                    if line_type == 'S' {
-                        if let Some(name) = self.string() {
-                            names.insert(current_id, name.to_string());
-                            current_id += 1;
-                        }
-                    }
-                    // Skip the first 'g' line (we're positioned at it after oneGoto)
-                    // Stop when we hit the NEXT 'g' or reach 'A' (alignments)
-                    if !is_first_line && (line_type == 'g' || line_type == 'A') {
-                        break;
-                    }
-                    is_first_line = false;
-                }
-                // Restore position (best effort)
-                let _ = ffi::oneGoto(self.ptr, (*self.ptr).lineType, saved_line);
-            }
-        }
-        names
-    }
-
-    /// Get all sequence lengths from the embedded GDB
-    ///
-    /// Returns a map of sequence ID → total sequence length.
-    /// The length is computed by summing all contig (C) and gap (G) lengths
-    /// for each scaffold (S).
-    ///
-    /// # Returns
-    /// A HashMap mapping sequence IDs (0-indexed) to their total lengths
-    pub fn get_all_sequence_lengths(&mut self) -> HashMap<i64, i64> {
-        let mut lengths = HashMap::new();
-
-        // Save current position
-        let saved_line = self.line_number();
-
-        // Navigate to the FIRST 'g' group object (GDB skeleton)
-        unsafe {
-            if ffi::oneGoto(self.ptr, 'g' as i8, 1) {
-                let mut current_seq_id = -1i64;
-                let mut current_length = 0i64;
+                let mut contig_id = 0i64;
+                let mut current_scaffold_name = String::new();
                 let mut is_first_line = true;
 
                 loop {
@@ -645,41 +604,102 @@ impl OneFile {
 
                     match line_type {
                         'S' => {
-                            // Save previous scaffold's length if any
-                            if current_seq_id >= 0 {
-                                lengths.insert(current_seq_id, current_length);
+                            // New scaffold - store its name
+                            if let Some(name) = self.string() {
+                                current_scaffold_name = name.to_string();
                             }
-                            // Start new scaffold
-                            current_seq_id += 1;
-                            current_length = 0;
-                        }
-                        'G' => {
-                            // Gap record - add to current scaffold length
-                            let gap_len = self.int(0);
-                            current_length += gap_len;
                         }
                         'C' => {
-                            // Contig record - add to current scaffold length
-                            let contig_len = self.int(0);
-                            current_length += contig_len;
+                            // Contig record - map this contig ID to current scaffold name
+                            names.insert(contig_id, current_scaffold_name.clone());
+                            contig_id += 1;
                         }
                         'g' | 'A' | 'a' => {
                             // Hit next GDB group or alignments - stop
                             if !is_first_line {
-                                // Save last scaffold's length
-                                if current_seq_id >= 0 {
-                                    lengths.insert(current_seq_id, current_length);
+                                break;
+                            }
+                        }
+                        _ => {
+                            // Skip other records (G for gaps, M for masks, etc.)
+                        }
+                    }
+                    is_first_line = false;
+                }
+                // Restore position (best effort)
+                let _ = ffi::oneGoto(self.ptr, (*self.ptr).lineType, saved_line);
+            }
+        }
+        names
+    }
+
+    /// Get sequence lengths mapped by contig ID for alignment files
+    ///
+    /// In alignment files with embedded GDB skeletons, this returns the total
+    /// scaffold length for each contig ID. Each contig maps to the total length
+    /// of its containing scaffold.
+    ///
+    /// # Returns
+    /// A HashMap mapping contig IDs (0-indexed) to their scaffold's total length
+    pub fn get_all_sequence_lengths(&mut self) -> HashMap<i64, i64> {
+        let mut lengths = HashMap::new();
+        let saved_line = self.line_number();
+
+        unsafe {
+            if ffi::oneGoto(self.ptr, 'g' as i8, 1) {
+                let mut contig_id = 0i64;
+                let mut current_scaffold_length = 0i64;
+                let mut scaffold_contigs = Vec::new(); // Track contigs in current scaffold
+                let mut is_first_line = true;
+
+                loop {
+                    let line_type = ffi::oneReadLine(self.ptr) as u8 as char;
+                    if line_type == '\0' {
+                        // EOF - process final scaffold
+                        for cid in scaffold_contigs.iter() {
+                            lengths.insert(*cid, current_scaffold_length);
+                        }
+                        break;
+                    }
+
+                    match line_type {
+                        'S' => {
+                            // Process previous scaffold's contigs
+                            for cid in scaffold_contigs.iter() {
+                                lengths.insert(*cid, current_scaffold_length);
+                            }
+                            // Start new scaffold
+                            scaffold_contigs.clear();
+                            current_scaffold_length = 0;
+                        }
+                        'G' => {
+                            // Gap record - add to scaffold length
+                            let gap_len = self.int(0);
+                            current_scaffold_length += gap_len;
+                        }
+                        'C' => {
+                            // Contig record - add to scaffold length and track this contig
+                            let contig_len = self.int(0);
+                            current_scaffold_length += contig_len;
+                            scaffold_contigs.push(contig_id);
+                            contig_id += 1;
+                        }
+                        'g' | 'A' | 'a' => {
+                            // Hit next GDB group or alignments
+                            if !is_first_line {
+                                // Process final scaffold's contigs
+                                for cid in scaffold_contigs.iter() {
+                                    lengths.insert(*cid, current_scaffold_length);
                                 }
                                 break;
                             }
                         }
                         _ => {
-                            // Skip other records (M, etc.)
+                            // Skip other records (M for masks, etc.)
                         }
                     }
                     is_first_line = false;
                 }
-
                 // Restore position (best effort)
                 let _ = ffi::oneGoto(self.ptr, (*self.ptr).lineType, saved_line);
             }
