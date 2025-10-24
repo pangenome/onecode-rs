@@ -19,6 +19,34 @@ This library provides safe, idiomatic Rust bindings to the ONEcode C library.
 - ✅ RAII-based resource management
 - ✅ **Fully thread-safe** - concurrent operations supported
 
+## Requirements
+
+### System Dependencies
+
+This library uses `bindgen` to generate Rust bindings from C headers, which requires clang/libclang:
+
+**Ubuntu/Debian:**
+```bash
+sudo apt-get install llvm-dev libclang-dev clang
+```
+
+**Fedora/RHEL:**
+```bash
+sudo dnf install clang-devel llvm-devel
+```
+
+**macOS:**
+```bash
+xcode-select --install  # Usually already installed
+```
+
+**Arch Linux:**
+```bash
+sudo pacman -S clang
+```
+
+For more details, see the [bindgen requirements documentation](https://rust-lang.github.io/rust-bindgen/requirements.html).
+
 ## Installation
 
 Add this to your `Cargo.toml`:
