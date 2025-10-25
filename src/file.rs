@@ -41,7 +41,7 @@ impl OneFile {
     ) -> Result<Self> {
         let c_path = CString::new(path)?;
         let schema_ptr = schema.map_or(ptr::null_mut(), |s| s.as_ptr());
-        let c_type = file_type.map(|t| CString::new(t)).transpose()?;
+        let c_type = file_type.map(CString::new).transpose()?;
         let type_ptr = c_type.as_ref().map_or(ptr::null(), |t| t.as_ptr());
 
         unsafe {
@@ -382,7 +382,7 @@ impl OneFile {
             }
             let list_field = (*info).listField as usize;
             let fields = (*self.ptr).field;
-            (*fields.add(list_field)).len as i64 & 0xffffffffffffffi64
+            (*fields.add(list_field)).len & 0xffffffffffffffi64
         }
     }
 
