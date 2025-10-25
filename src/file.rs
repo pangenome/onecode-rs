@@ -17,6 +17,14 @@ pub struct OneFile {
 }
 
 impl OneFile {
+    /// Trim sequence name at first whitespace character
+    /// This removes FASTA header descriptions, keeping only the sequence ID
+    fn trim_sequence_name(name: &str) -> String {
+        name.split_whitespace()
+            .next()
+            .unwrap_or(name)
+            .to_string()
+    }
     /// Open a ONE file for reading
     ///
     /// # Arguments
@@ -638,9 +646,9 @@ impl OneFile {
 
                     match line_type {
                         'S' => {
-                            // New scaffold - store its name
+                            // New scaffold - store its name (trim at first whitespace)
                             if let Some(name) = self.string() {
-                                current_scaffold_name = name.to_string();
+                                current_scaffold_name = Self::trim_sequence_name(name);
                             }
                         }
                         'C' => {
@@ -854,7 +862,7 @@ impl OneFile {
                     current_scaffold_length = 0;
 
                     if let Some(name) = file.string() {
-                        current_scaffold_name = name.to_string();
+                        current_scaffold_name = Self::trim_sequence_name(name);
                     }
                 }
                 'G' => {
