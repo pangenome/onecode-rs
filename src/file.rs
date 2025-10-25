@@ -41,7 +41,7 @@ impl OneFile {
     ) -> Result<Self> {
         let c_path = CString::new(path)?;
         let schema_ptr = schema.map_or(ptr::null_mut(), |s| s.as_ptr());
-        let c_type = file_type.map(|t| CString::new(t)).transpose()?;
+        let c_type = file_type.map(CString::new).transpose()?;
         let type_ptr = c_type.as_ref().map_or(ptr::null(), |t| t.as_ptr());
 
         unsafe {
@@ -382,7 +382,7 @@ impl OneFile {
             }
             let list_field = (*info).listField as usize;
             let fields = (*self.ptr).field;
-            (*fields.add(list_field)).len as i64 & 0xffffffffffffffi64
+            (*fields.add(list_field)).len & 0xffffffffffffffi64
         }
     }
 
@@ -508,6 +508,40 @@ impl OneFile {
                 (*info).accum.count
             }
         }
+    }
+
+    /// Get all references from the file header
+    ///
+    /// Returns a vector of (filename, count) tuples
+    pub fn get_references(&self) -> Vec<(String, i64)> {
+        let mut references = Vec::new();
+        let count = self.reference_count();
+
+        if count == 0 {
+            return references;
+        }
+
+        unsafe {
+            let ref_array = (*self.ptr).reference;
+            if ref_array.is_null() {
+                return references;
+            }
+
+            for i in 0..count {
+                let ref_ptr = ref_array.add(i as usize);
+                let filename = if (*ref_ptr).filename.is_null() {
+                    String::new()
+                } else {
+                    std::ffi::CStr::from_ptr((*ref_ptr).filename)
+                        .to_string_lossy()
+                        .into_owned()
+                };
+                let count = (*ref_ptr).count;
+                references.push((filename, count));
+            }
+        }
+
+        references
     }
 
     /// Get the internal pointer (for advanced use with FFI)
@@ -772,6 +806,80 @@ impl OneFile {
             }
         }
         contigs
+    }
+
+    /// Load metadata from a GDB file (.gdb or .1gdb)
+    ///
+    /// This reads contig-to-scaffold mappings from a standalone GDB file (not an embedded skeleton).
+    /// Standalone GDB files have S and C records at the top level, not in a 'g' group.
+    ///
+    /// # Arguments
+    /// * `path` - Path to the GDB file (.gdb or .1gdb)
+    ///
+    /// # Returns
+    /// A tuple of (seq_names, seq_lengths, contig_offsets) HashMaps
+    pub fn read_gdb_metadata(path: &str) -> Result<(HashMap<i64, String>, HashMap<i64, i64>, HashMap<i64, (i64, i64)>)> {
+        let mut file = Self::open_read(path, None, Some("gdb"), 1)?;
+
+        let mut seq_names = HashMap::new();
+        let mut seq_lengths = HashMap::new();
+        let mut contig_offsets = HashMap::new();
+
+        let mut contig_id = 0i64;
+        let mut spos = 0i64; // scaffold position accumulator
+        let mut current_scaffold_name = String::new();
+        let mut current_scaffold_length = 0i64;
+        let mut scaffold_contigs = Vec::new(); // Track contigs in current scaffold
+
+        // Read S (scaffold) and C (contig) records from top level
+        loop {
+            let line_type = file.read_line();
+            if line_type == '\0' {
+                // EOF - process final scaffold
+                for cid in scaffold_contigs.iter() {
+                    seq_lengths.insert(*cid, current_scaffold_length);
+                }
+                break;
+            }
+
+            match line_type {
+                'S' => {
+                    // Process previous scaffold's contigs
+                    for cid in scaffold_contigs.iter() {
+                        seq_lengths.insert(*cid, current_scaffold_length);
+                    }
+                    // Start new scaffold
+                    scaffold_contigs.clear();
+                    spos = 0;
+                    current_scaffold_length = 0;
+
+                    if let Some(name) = file.string() {
+                        current_scaffold_name = name.to_string();
+                    }
+                }
+                'G' => {
+                    // Gap record - advance scaffold position and add to scaffold length
+                    let gap_len = file.int(0);
+                    spos += gap_len;
+                    current_scaffold_length += gap_len;
+                }
+                'C' => {
+                    // Contig record - record metadata and advance position
+                    let clen = file.int(0);
+                    seq_names.insert(contig_id, current_scaffold_name.clone());
+                    contig_offsets.insert(contig_id, (spos, clen));
+                    scaffold_contigs.push(contig_id);
+                    contig_id += 1;
+                    spos += clen;
+                    current_scaffold_length += clen;
+                }
+                _ => {
+                    // Skip other records (M for masks, f for frequency, u for uppercase, etc.)
+                }
+            }
+        }
+
+        Ok((seq_names, seq_lengths, contig_offsets))
     }
 
     /// Close the file explicitly
