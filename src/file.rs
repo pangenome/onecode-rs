@@ -61,7 +61,12 @@ impl OneFile {
                 } else {
                     "Unknown error".to_string()
                 };
-                return Err(OneError::OpenFailed(format!("{}: {}", path, err_msg)));
+                let msg = if err_msg.trim().is_empty() {
+                    path.to_string()
+                } else {
+                    format!("{}: {}", path, err_msg)
+                };
+                return Err(OneError::OpenFailed(msg));
             }
             Ok(OneFile {
                 ptr,
@@ -104,7 +109,12 @@ impl OneFile {
                 } else {
                     "Unknown error".to_string()
                 };
-                return Err(OneError::OpenFailed(format!("{}: {}", path, err_msg)));
+                let msg = if err_msg.trim().is_empty() {
+                    path.to_string()
+                } else {
+                    format!("{}: {}", path, err_msg)
+                };
+                return Err(OneError::OpenFailed(msg));
             }
             Ok(OneFile {
                 ptr,
@@ -134,7 +144,12 @@ impl OneFile {
                 } else {
                     "Unknown error".to_string()
                 };
-                return Err(OneError::OpenFailed(format!("{}: {}", path, err_msg)));
+                let msg = if err_msg.trim().is_empty() {
+                    path.to_string()
+                } else {
+                    format!("{}: {}", path, err_msg)
+                };
+                return Err(OneError::OpenFailed(msg));
             }
             Ok(OneFile {
                 ptr,
