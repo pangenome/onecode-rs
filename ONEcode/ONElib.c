@@ -413,9 +413,8 @@ OneSchema *oneSchemaCreateFromText (const char *text) // write to temp file and 
 
   OneSchema *vs = oneSchemaCreateFromFile (template) ;
 
-  errno = 0 ;
-  unlink (template) ;  // delete temporary file - not ideal: will remain if schemaCreate crashes
-  if (errno) die ("failed to remove temporary file %s errno %d\n", template, errno) ;
+  if (unlink (template) == -1)  // delete temporary file - not ideal: will remain if schemaCreate crashes
+    die ("failed to remove temporary file %s errno %d\n", template, errno) ;
 
   return vs ;
 }
