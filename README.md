@@ -53,6 +53,13 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
+onecode = "0.1.0"
+```
+
+Or use the latest development version:
+
+```toml
+[dependencies]
 onecode = { git = "https://github.com/pangenome/onecode-rs" }
 ```
 
