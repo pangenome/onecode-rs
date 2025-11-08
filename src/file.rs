@@ -935,11 +935,22 @@ impl OneFile {
     pub fn seek_to_byte_offset(&mut self, byte_offset: i64) -> Result<()> {
         unsafe {
             let file_ptr = (*self.ptr).f as *mut libc::FILE;
+            // First seek clears input buffer
+            if libc::fseek(file_ptr, byte_offset, libc::SEEK_SET) != 0 {
+                return Err(OneError::Other(format!("Failed to seek to byte {}", byte_offset)));
+            }
+            // Second seek to same position ensures buffer is properly reset
             if libc::fseek(file_ptr, byte_offset, libc::SEEK_SET) != 0 {
                 return Err(OneError::Other(format!("Failed to seek to byte {}", byte_offset)));
             }
         }
         Ok(())
+    }
+
+    /// Seek and read line - optimized for batching multiple reads from same file
+    pub fn seek_and_read_line(&mut self, byte_offset: i64) -> Result<char> {
+        self.seek_to_byte_offset(byte_offset)?;
+        Ok(self.read_line())
     }
 
     /// Get current byte position in the file using ftell
