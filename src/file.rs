@@ -634,7 +634,183 @@ impl OneFile {
         None
     }
 
-    /// Get sequence names mapped by contig ID for alignment files
+    /// Read all embedded GDB group metadata in a single pass
+    ///
+    /// Returns a vector of tuples, one per 'g' group, each containing:
+    /// (sequence_names, sequence_lengths, contig_offsets)
+    /// where each HashMap maps global contig IDs to their values.
+    ///
+    /// # Returns
+    /// A Vec of (names, lengths, offsets) tuples, one per 'g' group in order
+    pub fn get_all_groups_metadata(&mut self) -> Vec<(HashMap<i64, String>, HashMap<i64, i64>, HashMap<i64, (i64, i64)>)> {
+        let mut groups = Vec::new();
+        let saved_line = self.line_number();
+
+        unsafe {
+            if ffi::oneGoto(self.ptr, 'g' as i8, 1) {
+                let mut group_contig_id = 0i64;  // Per-group contig ID (resets for each 'g')
+                let mut current_group_names = HashMap::new();
+                let mut current_group_lengths = HashMap::new();
+                let mut current_group_offsets = HashMap::new();
+
+                let mut current_scaffold_name = String::new();
+                let mut current_scaffold_length = 0i64;
+                let mut scaffold_contigs = Vec::new();
+                let mut scaffold_pos = 0i64;
+                let mut is_first_line = true;
+
+                loop {
+                    let line_type = ffi::oneReadLine(self.ptr) as u8 as char;
+
+                    if line_type == '\0' {
+                        // EOF - save final scaffold and final group
+                        for cid in scaffold_contigs.iter() {
+                            current_group_lengths.insert(*cid, current_scaffold_length);
+                        }
+                        if !current_group_names.is_empty() {
+                            groups.push((current_group_names, current_group_lengths, current_group_offsets));
+                        }
+                        break;
+                    }
+
+                    match line_type {
+                        'g' => {
+                            if !is_first_line {
+                                // Save current scaffold to current group
+                                for cid in scaffold_contigs.iter() {
+                                    current_group_lengths.insert(*cid, current_scaffold_length);
+                                }
+                                // Save current group and start new one
+                                groups.push((current_group_names, current_group_lengths, current_group_offsets));
+                                current_group_names = HashMap::new();
+                                current_group_lengths = HashMap::new();
+                                current_group_offsets = HashMap::new();
+                                scaffold_contigs.clear();
+                                current_scaffold_length = 0;
+                                scaffold_pos = 0;
+                                group_contig_id = 0;  // Reset contig ID for new group
+                            }
+                        }
+                        'S' => {
+                            // Process previous scaffold
+                            for cid in scaffold_contigs.iter() {
+                                current_group_lengths.insert(*cid, current_scaffold_length);
+                            }
+                            // Start new scaffold
+                            if let Some(name) = self.string() {
+                                current_scaffold_name = Self::trim_sequence_name(name);
+                            }
+                            scaffold_contigs.clear();
+                            current_scaffold_length = 0;
+                            scaffold_pos = 0;
+                        }
+                        'G' => {
+                            // Gap
+                            let gap_len = self.int(0);
+                            current_scaffold_length += gap_len;
+                            scaffold_pos += gap_len;
+                        }
+                        'C' => {
+                            // Contig - use per-group contig ID
+                            let clen = self.int(0);
+                            current_group_names.insert(group_contig_id, current_scaffold_name.clone());
+                            current_group_offsets.insert(group_contig_id, (scaffold_pos, clen));
+                            current_scaffold_length += clen;
+                            scaffold_contigs.push(group_contig_id);
+                            scaffold_pos += clen;
+                            group_contig_id += 1;
+                        }
+                        'A' | 'a' => {
+                            // Hit alignments - save final scaffold and final group
+                            if !is_first_line {
+                                for cid in scaffold_contigs.iter() {
+                                    current_group_lengths.insert(*cid, current_scaffold_length);
+                                }
+                                if !current_group_names.is_empty() {
+                                    groups.push((current_group_names, current_group_lengths, current_group_offsets));
+                                }
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                    is_first_line = false;
+                }
+                let _ = ffi::oneGoto(self.ptr, (*self.ptr).lineType, saved_line);
+            }
+        }
+        groups
+    }
+
+    /// Get sequence names from a specific 'g' group with correct global contig IDs
+    ///
+    /// Contig IDs are global across all 'g' groups. This function correctly calculates
+    /// the starting contig ID for the requested group by counting contigs in previous groups.
+    ///
+    /// # Arguments
+    /// * `group_num` - Which 'g' group to read (1-indexed)
+    ///
+    /// # Returns
+    /// A HashMap mapping global contig IDs to their scaffold names
+    pub fn get_group_sequence_names(&mut self, group_num: i64) -> HashMap<i64, String> {
+        let mut names = HashMap::new();
+        let saved_line = self.line_number();
+
+        unsafe {
+            // First, count contigs in all previous groups to get the starting contig_id
+            let mut starting_contig_id = 0i64;
+            for prev_group in 1..group_num {
+                if ffi::oneGoto(self.ptr, 'g' as i8, prev_group) {
+                    loop {
+                        let line_type = ffi::oneReadLine(self.ptr) as u8 as char;
+                        if line_type == '\0' || line_type == 'g' || line_type == 'A' || line_type == 'a' {
+                            break;
+                        }
+                        if line_type == 'C' {
+                            starting_contig_id += 1;
+                        }
+                    }
+                }
+            }
+
+            // Now read the target group with correct starting ID
+            if ffi::oneGoto(self.ptr, 'g' as i8, group_num) {
+                let mut contig_id = starting_contig_id;
+                let mut current_scaffold_name = String::new();
+                let mut is_first_line = true;
+
+                loop {
+                    let line_type = ffi::oneReadLine(self.ptr) as u8 as char;
+                    if line_type == '\0' {
+                        break;
+                    }
+
+                    match line_type {
+                        'S' => {
+                            if let Some(name) = self.string() {
+                                current_scaffold_name = Self::trim_sequence_name(name);
+                            }
+                        }
+                        'C' => {
+                            names.insert(contig_id, current_scaffold_name.clone());
+                            contig_id += 1;
+                        }
+                        'g' | 'A' | 'a' => {
+                            if !is_first_line {
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                    is_first_line = false;
+                }
+                let _ = ffi::oneGoto(self.ptr, (*self.ptr).lineType, saved_line);
+            }
+        }
+        names
+    }
+
+    /// Get sequence names mapped by contig ID for alignment files (all groups)
     ///
     /// In alignment files with embedded GDB skeletons, alignments reference
     /// contigs by their global ID. This method returns a mapping from contig ID
@@ -671,8 +847,15 @@ impl OneFile {
                             names.insert(contig_id, current_scaffold_name.clone());
                             contig_id += 1;
                         }
-                        'g' | 'A' | 'a' => {
-                            // Hit next GDB group or alignments - stop
+                        'g' => {
+                            // Hit next 'g' group - continue reading to get all genomes
+                            if !is_first_line {
+                                // Continue to next group instead of breaking
+                                is_first_line = true;
+                            }
+                        }
+                        'A' | 'a' => {
+                            // Hit alignments - stop reading groups
                             if !is_first_line {
                                 break;
                             }
@@ -690,7 +873,157 @@ impl OneFile {
         names
     }
 
-    /// Get sequence lengths mapped by contig ID for alignment files
+    /// Get sequence lengths from a specific 'g' group with correct global contig IDs
+    ///
+    /// # Arguments
+    /// * `group_num` - Which 'g' group to read (1-indexed)
+    ///
+    /// # Returns
+    /// A HashMap mapping global contig IDs to their scaffold lengths
+    pub fn get_group_sequence_lengths(&mut self, group_num: i64) -> HashMap<i64, i64> {
+        let mut lengths = HashMap::new();
+        let saved_line = self.line_number();
+
+        unsafe {
+            // Count contigs in previous groups
+            let mut starting_contig_id = 0i64;
+            for prev_group in 1..group_num {
+                if ffi::oneGoto(self.ptr, 'g' as i8, prev_group) {
+                    loop {
+                        let line_type = ffi::oneReadLine(self.ptr) as u8 as char;
+                        if line_type == '\0' || line_type == 'g' || line_type == 'A' || line_type == 'a' {
+                            break;
+                        }
+                        if line_type == 'C' {
+                            starting_contig_id += 1;
+                        }
+                    }
+                }
+            }
+
+            // Read target group
+            if ffi::oneGoto(self.ptr, 'g' as i8, group_num) {
+                let mut contig_id = starting_contig_id;
+                let mut current_scaffold_length = 0i64;
+                let mut scaffold_contigs = Vec::new();
+                let mut is_first_line = true;
+
+                loop {
+                    let line_type = ffi::oneReadLine(self.ptr) as u8 as char;
+                    if line_type == '\0' {
+                        // Process final scaffold
+                        for cid in scaffold_contigs.iter() {
+                            lengths.insert(*cid, current_scaffold_length);
+                        }
+                        break;
+                    }
+
+                    match line_type {
+                        'S' => {
+                            // Process previous scaffold
+                            for cid in scaffold_contigs.iter() {
+                                lengths.insert(*cid, current_scaffold_length);
+                            }
+                            scaffold_contigs.clear();
+                            current_scaffold_length = 0;
+                        }
+                        'G' => {
+                            current_scaffold_length += self.int(0);
+                        }
+                        'C' => {
+                            let contig_len = self.int(0);
+                            current_scaffold_length += contig_len;
+                            scaffold_contigs.push(contig_id);
+                            contig_id += 1;
+                        }
+                        'g' | 'A' | 'a' => {
+                            if !is_first_line {
+                                // Process final scaffold
+                                for cid in scaffold_contigs.iter() {
+                                    lengths.insert(*cid, current_scaffold_length);
+                                }
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                    is_first_line = false;
+                }
+                let _ = ffi::oneGoto(self.ptr, (*self.ptr).lineType, saved_line);
+            }
+        }
+        lengths
+    }
+
+    /// Get contig offsets from a specific 'g' group with correct global contig IDs
+    ///
+    /// # Arguments
+    /// * `group_num` - Which 'g' group to read (1-indexed)
+    ///
+    /// # Returns
+    /// A HashMap mapping global contig IDs to (scaffold_offset, contig_length)
+    pub fn get_group_contig_offsets(&mut self, group_num: i64) -> HashMap<i64, (i64, i64)> {
+        let mut contigs = HashMap::new();
+        let saved_line = self.line_number();
+
+        unsafe {
+            // Count contigs in previous groups
+            let mut starting_contig_id = 0i64;
+            for prev_group in 1..group_num {
+                if ffi::oneGoto(self.ptr, 'g' as i8, prev_group) {
+                    loop {
+                        let line_type = ffi::oneReadLine(self.ptr) as u8 as char;
+                        if line_type == '\0' || line_type == 'g' || line_type == 'A' || line_type == 'a' {
+                            break;
+                        }
+                        if line_type == 'C' {
+                            starting_contig_id += 1;
+                        }
+                    }
+                }
+            }
+
+            // Read target group
+            if ffi::oneGoto(self.ptr, 'g' as i8, group_num) {
+                let mut contig_id = starting_contig_id;
+                let mut spos = 0i64;
+                let mut is_first_line = true;
+
+                loop {
+                    let line_type = ffi::oneReadLine(self.ptr) as u8 as char;
+                    if line_type == '\0' {
+                        break;
+                    }
+
+                    match line_type {
+                        'S' => {
+                            spos = 0;
+                        }
+                        'G' => {
+                            spos += self.int(0);
+                        }
+                        'C' => {
+                            let clen = self.int(0);
+                            contigs.insert(contig_id, (spos, clen));
+                            contig_id += 1;
+                            spos += clen;
+                        }
+                        'g' | 'A' | 'a' => {
+                            if !is_first_line {
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                    is_first_line = false;
+                }
+                let _ = ffi::oneGoto(self.ptr, (*self.ptr).lineType, saved_line);
+            }
+        }
+        contigs
+    }
+
+    /// Get sequence lengths mapped by contig ID for alignment files (all groups)
     ///
     /// In alignment files with embedded GDB skeletons, this returns the total
     /// scaffold length for each contig ID. Each contig maps to the total length
@@ -741,10 +1074,22 @@ impl OneFile {
                             scaffold_contigs.push(contig_id);
                             contig_id += 1;
                         }
-                        'g' | 'A' | 'a' => {
-                            // Hit next GDB group or alignments
+                        'g' => {
+                            // Hit next 'g' group - process current scaffold and continue to next group
                             if !is_first_line {
-                                // Process final scaffold's contigs
+                                // Process current scaffold's contigs
+                                for cid in scaffold_contigs.iter() {
+                                    lengths.insert(*cid, current_scaffold_length);
+                                }
+                                // Reset for next group
+                                scaffold_contigs.clear();
+                                current_scaffold_length = 0;
+                                is_first_line = true;
+                            }
+                        }
+                        'A' | 'a' => {
+                            // Hit alignments - process final scaffold and stop
+                            if !is_first_line {
                                 for cid in scaffold_contigs.iter() {
                                     lengths.insert(*cid, current_scaffold_length);
                                 }
@@ -811,8 +1156,15 @@ impl OneFile {
                             contig_id += 1;
                             spos += clen;
                         }
-                        'g' | 'A' => {
-                            // Hit next GDB group or alignments - stop
+                        'g' => {
+                            // Hit next 'g' group - reset scaffold position and continue
+                            if !is_first_line {
+                                spos = 0;
+                                is_first_line = true;
+                            }
+                        }
+                        'A' => {
+                            // Hit alignments - stop reading groups
                             if !is_first_line {
                                 break;
                             }
