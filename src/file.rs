@@ -905,6 +905,52 @@ impl OneFile {
         Ok((seq_names, seq_lengths, contig_offsets))
     }
 
+    /// Get byte offset for a specific alignment object (0-indexed)
+    /// Returns None if index unavailable or out of bounds
+    pub fn get_alignment_byte_offset(&self, alignment_index: i64) -> Option<i64> {
+        unsafe {
+            let li = (*self.ptr).info['A' as usize];
+            if li.is_null() { return None; }
+            let index_ptr = (*li).index;
+            if index_ptr.is_null() { return None; }
+            if alignment_index < 0 || alignment_index >= (*li).indexSize { return None; }
+            Some(*index_ptr.offset(alignment_index as isize))
+        }
+    }
+
+    /// Get all byte offsets for alignment objects
+    /// Returns empty vector if index unavailable
+    pub fn get_all_alignment_byte_offsets(&self) -> Vec<i64> {
+        unsafe {
+            let li = (*self.ptr).info['A' as usize];
+            if li.is_null() { return Vec::new(); }
+            let index_ptr = (*li).index;
+            if index_ptr.is_null() { return Vec::new(); }
+            let count = (*li).given.count;
+            std::slice::from_raw_parts(index_ptr, (count + 1) as usize).to_vec()
+        }
+    }
+
+    /// Seek to a specific byte offset in the file
+    pub fn seek_to_byte_offset(&mut self, byte_offset: i64) -> Result<()> {
+        unsafe {
+            let file_ptr = (*self.ptr).f as *mut libc::FILE;
+            if libc::fseek(file_ptr, byte_offset, libc::SEEK_SET) != 0 {
+                return Err(OneError::Other(format!("Failed to seek to byte {}", byte_offset)));
+            }
+        }
+        Ok(())
+    }
+
+    /// Get current byte position in the file using ftell
+    /// Returns the byte offset of the current position in the file
+    pub fn get_current_byte_position(&self) -> i64 {
+        unsafe {
+            let file_ptr = (*self.ptr).f as *mut libc::FILE;
+            libc::ftell(file_ptr)
+        }
+    }
+
     /// Close the file explicitly
     ///
     /// This is called automatically on drop, but you can call it manually
