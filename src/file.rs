@@ -4,6 +4,7 @@ use crate::error::{OneError, Result};
 use crate::ffi;
 use crate::schema::OneSchema;
 use std::collections::HashMap;
+use std::os::raw::c_char;
 use std::ffi::{CStr, CString};
 use std::ptr;
 
@@ -190,7 +191,7 @@ impl OneFile {
         unsafe {
             ffi::oneWriteLine(
                 self.ptr,
-                line_type as i8,
+                line_type as c_char,
                 list_len,
                 list_buf.unwrap_or(ptr::null_mut()),
             );
@@ -203,7 +204,7 @@ impl OneFile {
         unsafe {
             // We need to use a format string for the variadic function
             let format = CString::new("%s")?;
-            ffi::oneWriteComment(self.ptr, format.as_ptr() as *mut i8, c_comment.as_ptr());
+            ffi::oneWriteComment(self.ptr, format.as_ptr() as *mut c_char, c_comment.as_ptr());
         }
         Ok(())
     }
@@ -222,7 +223,7 @@ impl OneFile {
                 self.ptr,
                 c_prog.as_ptr(),
                 c_version.as_ptr(),
-                format.as_ptr() as *mut i8,
+                format.as_ptr() as *mut c_char,
                 c_command.as_ptr(),
             );
             Ok(result)
@@ -265,7 +266,7 @@ impl OneFile {
         unsafe {
             let success = ffi::oneStats(
                 self.ptr,
-                line_type as i8,
+                line_type as c_char,
                 &mut count,
                 &mut max,
                 &mut total,
@@ -287,7 +288,7 @@ impl OneFile {
     /// Setting i == 0 goes to the start of the data.
     pub fn goto(&mut self, line_type: char, index: i64) -> Result<()> {
         unsafe {
-            let success = ffi::oneGoto(self.ptr, line_type as i8, index);
+            let success = ffi::oneGoto(self.ptr, line_type as c_char, index);
             if !success {
                 return Err(OneError::Other(format!(
                     "Failed to goto object {} of type '{}'",
@@ -388,7 +389,7 @@ impl OneFile {
     pub fn set_char(&mut self, field: usize, value: char) {
         unsafe {
             let fields = (*self.ptr).field;
-            (*fields.add(field)).c = value as i8;
+            (*fields.add(field)).c = value as c_char;
         }
     }
 
@@ -420,7 +421,7 @@ impl OneFile {
     /// Returns a reference to the string data.
     pub fn string(&self) -> Option<&str> {
         unsafe {
-            let ptr = ffi::_oneList(self.ptr) as *const i8;
+            let ptr = ffi::_oneList(self.ptr) as *const c_char;
             if ptr.is_null() {
                 None
             } else {
@@ -495,7 +496,7 @@ impl OneFile {
     /// Pass the current string pointer to get the next one.
     pub fn next_string<'a>(&self, current: &'a str) -> Option<&'a str> {
         unsafe {
-            let next_ptr = current.as_ptr().add(current.len() + 1) as *const i8;
+            let next_ptr = current.as_ptr().add(current.len() + 1) as *const c_char;
             if *next_ptr == 0 {
                 None
             } else {
@@ -588,7 +589,7 @@ impl OneFile {
 
         unsafe {
             // Navigate to the FIRST 'g' group object (objects are numbered starting at 1)
-            if ffi::oneGoto(self.ptr, 'g' as i8, 1) {
+            if ffi::oneGoto(self.ptr, 'g' as c_char, 1) {
                 let mut contig_id = 0i64;
                 let mut current_scaffold_name = String::new();
                 let mut is_first_line = true;
@@ -647,7 +648,7 @@ impl OneFile {
         let saved_line = self.line_number();
 
         unsafe {
-            if ffi::oneGoto(self.ptr, 'g' as i8, 1) {
+            if ffi::oneGoto(self.ptr, 'g' as c_char, 1) {
                 let mut group_contig_id = 0i64;  // Per-group contig ID (resets for each 'g')
                 let mut current_group_names = HashMap::new();
                 let mut current_group_lengths = HashMap::new();
@@ -760,7 +761,7 @@ impl OneFile {
             // First, count contigs in all previous groups to get the starting contig_id
             let mut starting_contig_id = 0i64;
             for prev_group in 1..group_num {
-                if ffi::oneGoto(self.ptr, 'g' as i8, prev_group) {
+                if ffi::oneGoto(self.ptr, 'g' as c_char, prev_group) {
                     loop {
                         let line_type = ffi::oneReadLine(self.ptr) as u8 as char;
                         if line_type == '\0' || line_type == 'g' || line_type == 'A' || line_type == 'a' {
@@ -774,7 +775,7 @@ impl OneFile {
             }
 
             // Now read the target group with correct starting ID
-            if ffi::oneGoto(self.ptr, 'g' as i8, group_num) {
+            if ffi::oneGoto(self.ptr, 'g' as c_char, group_num) {
                 let mut contig_id = starting_contig_id;
                 let mut current_scaffold_name = String::new();
                 let mut is_first_line = true;
@@ -824,7 +825,7 @@ impl OneFile {
 
         unsafe {
             // Navigate to the first 'g' group object (GDB skeleton)
-            if ffi::oneGoto(self.ptr, 'g' as i8, 1) {
+            if ffi::oneGoto(self.ptr, 'g' as c_char, 1) {
                 let mut contig_id = 0i64;
                 let mut current_scaffold_name = String::new();
                 let mut is_first_line = true;
@@ -888,7 +889,7 @@ impl OneFile {
             // Count contigs in previous groups
             let mut starting_contig_id = 0i64;
             for prev_group in 1..group_num {
-                if ffi::oneGoto(self.ptr, 'g' as i8, prev_group) {
+                if ffi::oneGoto(self.ptr, 'g' as c_char, prev_group) {
                     loop {
                         let line_type = ffi::oneReadLine(self.ptr) as u8 as char;
                         if line_type == '\0' || line_type == 'g' || line_type == 'A' || line_type == 'a' {
@@ -902,7 +903,7 @@ impl OneFile {
             }
 
             // Read target group
-            if ffi::oneGoto(self.ptr, 'g' as i8, group_num) {
+            if ffi::oneGoto(self.ptr, 'g' as c_char, group_num) {
                 let mut contig_id = starting_contig_id;
                 let mut current_scaffold_length = 0i64;
                 let mut scaffold_contigs = Vec::new();
@@ -970,7 +971,7 @@ impl OneFile {
             // Count contigs in previous groups
             let mut starting_contig_id = 0i64;
             for prev_group in 1..group_num {
-                if ffi::oneGoto(self.ptr, 'g' as i8, prev_group) {
+                if ffi::oneGoto(self.ptr, 'g' as c_char, prev_group) {
                     loop {
                         let line_type = ffi::oneReadLine(self.ptr) as u8 as char;
                         if line_type == '\0' || line_type == 'g' || line_type == 'A' || line_type == 'a' {
@@ -984,7 +985,7 @@ impl OneFile {
             }
 
             // Read target group
-            if ffi::oneGoto(self.ptr, 'g' as i8, group_num) {
+            if ffi::oneGoto(self.ptr, 'g' as c_char, group_num) {
                 let mut contig_id = starting_contig_id;
                 let mut spos = 0i64;
                 let mut is_first_line = true;
@@ -1036,7 +1037,7 @@ impl OneFile {
         let saved_line = self.line_number();
 
         unsafe {
-            if ffi::oneGoto(self.ptr, 'g' as i8, 1) {
+            if ffi::oneGoto(self.ptr, 'g' as c_char, 1) {
                 let mut contig_id = 0i64;
                 let mut current_scaffold_length = 0i64;
                 let mut scaffold_contigs = Vec::new(); // Track contigs in current scaffold
@@ -1128,7 +1129,7 @@ impl OneFile {
 
         // Navigate to the FIRST 'g' group object (GDB skeleton)
         unsafe {
-            if ffi::oneGoto(self.ptr, 'g' as i8, 1) {
+            if ffi::oneGoto(self.ptr, 'g' as c_char, 1) {
                 let mut contig_id = 0i64;
                 let mut spos = 0i64; // scaffold position accumulator
                 let mut is_first_line = true;
